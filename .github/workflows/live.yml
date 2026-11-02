@@ -1,0 +1,24 @@
+name: Giocatori live
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # ogni 5 minuti (GitHub a volte ritarda di qualche minuto)
+  workflow_dispatch:
+
+permissions:
+  actions: write   # serve solo per il keepalive sotto
+
+jobs:
+  aggiorna:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: python stats.py
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      # GitHub spegne i workflow programmati dopo 60 giorni senza attività: riattivarlo azzera il conteggio
+      - run: gh workflow enable live.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
