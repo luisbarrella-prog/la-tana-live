@@ -57,7 +57,7 @@ def previous_counts(message):
     for f in (message or {}).get("embeds", [{}])[0].get("fields", []):
         m = re.search(r"\*\*([\d.]+)\*\*", f["value"])
         for name, _, _ in GAMES:
-            if name in f["name"] and m:
+            if f["name"].endswith(name) and m:  # endswith: "Hell Let Loose" non deve prendere il Vietnam
                 out[name] = int(m.group(1).replace(".", ""))
     return out
 
@@ -116,6 +116,10 @@ def self_test():
     assert "non pubblico" in e["fields"][2]["value"]
     prev = previous_counts({"embeds": [{"fields": [{"name": "🥇 🪖 Battlefield 6", "value": "**15.930** online ora"}]}]})
     assert prev == {"Battlefield 6": 15930}
+    prev = previous_counts({"embeds": [{"fields": [
+        {"name": "🥉 🎖️ Hell Let Loose", "value": "**3.177** online ora"},
+        {"name": "▫️ 🚁 Hell Let Loose: Vietnam", "value": "**899** online ora"}]}]})
+    assert prev == {"Hell Let Loose": 3177, "Hell Let Loose: Vietnam": 899}
     print("self-test ok")
 
 
