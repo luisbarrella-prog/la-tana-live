@@ -84,11 +84,15 @@ def build_embed(counts, before):
                            "inline": False})
     total = sum(c for _, _, c in known)
     return {
-        "title": "🌍 GIOCATORI ONLINE NEL MONDO",
-        "description": f"**{fmt(total)}** giocatori in partita sui nostri giochi, adesso",
+        "title": "🖥️ GIOCATORI ONLINE SU STEAM (PC)",
+        "description": (
+            f"**{fmt(total)}** giocatori su Steam in questo momento\n"
+            "-# ⚠️ Solo PC Steam: Xbox, PlayStation, EA app, Battle.net ed Epic non pubblicano i loro numeri. "
+            "I siti che mostrano un \"totale su tutte le piattaforme\" fanno solo stime, quindi qui non le usiamo."
+        ),
         "color": 0x2ECC71,
         "fields": fields,
-        "footer": {"text": "Fonte: Steam (giocatori PC su Steam) · si aggiorna da solo"},
+        "footer": {"text": "Fonte ufficiale: Steam · si aggiorna ogni 5 minuti circa"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
