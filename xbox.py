@@ -1,7 +1,7 @@
 """La Tana - notizie Xbox nel forum 🟢-xbox-news, una card per notizia (Components V2).
 
-Gira una volta e termina. Fonte: feed RSS pubblico di MondoXbox, sito italiano solo Xbox
-(Xbox Wire blocca i lettori automatici).
+Gira una volta e termina. Fonti: feed RSS pubblici italiani, MondoXbox (solo Xbox) e IGN Italia
+filtrato sulle notizie Xbox (Xbox Wire blocca i lettori automatici).
 """
 import html
 import os
@@ -17,8 +17,12 @@ from stats import API, http
 
 GUILD_ID = "1566752361035341854"
 FORUM_ID = os.environ.get("XBOX_FORUM_ID", "1568281182456782908")
-FEED = "https://feeds.feedburner.com/mondoxbox/mxnews"
-SOURCE = "MondoXbox"
+# (nome, feed, filtro su titolo e categorie: None = tutto il feed parla già di Xbox)
+SOURCES = [
+    ("MondoXbox", "https://feeds.feedburner.com/mondoxbox/mxnews", None),
+    ("IGN Italia", "https://it.ign.com/feed.xml",
+     r"xbox|game pass|series [xs]|halo|forza|gears of war|fable|bethesda|starfield|elder scrolls|phil spencer"),
+]
 XBOX_GREEN = 0x107C10
 FIRST_RUN_MAX = 8   # al primo giro non inondiamo il forum con tutto il feed
 RUN_MAX = 10
@@ -35,19 +39,30 @@ TAGS = [
 
 
 def fetch_feed():
-    req = urllib.request.Request(FEED, headers={"User-Agent": "LaTanaBot/1.0 (Discord news feed)"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        root = ET.fromstring(r.read())
     items = []
-    for it in root.findall("./channel/item"):
-        desc = it.findtext("description", "")
-        items.append({
-            "title": html.unescape(it.findtext("title", "")).strip(),
-            "link": it.findtext("link", "").strip(),
-            "summary": clean(desc),
-            "image": big_image(desc),
-            "ts": int(parsedate_to_datetime(it.findtext("pubDate")).timestamp()),
-        })
+    for source, url, only in SOURCES:
+        req = urllib.request.Request(url, headers={"User-Agent": "LaTanaBot/1.0 (Discord news feed)"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                root = ET.fromstring(r.read())
+        except Exception as e:  # una fonte giù non deve fermare le altre
+            print(f"{source} non raggiungibile: {e}")
+            continue
+        for it in root.findall("./channel/item"):
+            title = html.unescape(it.findtext("title", "")).strip()
+            cats = " ".join(c.text or "" for c in it.findall("category"))
+            if only and not re.search(rf"\b({only})\b", f"{title} {cats}", re.I):
+                continue
+            desc = it.findtext("description", "")
+            enc = it.find("enclosure")
+            items.append({
+                "title": title,
+                "link": it.findtext("link", "").strip(),
+                "summary": clean(desc),
+                "image": enc.get("url") if enc is not None else big_image(desc),
+                "source": source,
+                "ts": int(parsedate_to_datetime(it.findtext("pubDate")).timestamp()),
+            })
     return items
 
 
@@ -79,33 +94,32 @@ def card(item, tags):
     if item["image"]:
         inner.append({"type": 12, "items": [{"media": {"url": item["image"]}}]})
     inner += [
-        {"type": 10, "content": f"## {item['title']}\n-# 🟢 {SOURCE}  ·  <t:{item['ts']}:R>  ·  {'  ·  '.join(tags)}"},
+        {"type": 10, "content": f"## {item['title']}\n-# 🟢 {item['source']}  ·  <t:{item['ts']}:R>  ·  {'  ·  '.join(tags)}"},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 10, "content": item["summary"] or "​"},
-        {"type": 1, "components": [{"type": 2, "style": 5, "label": f"Articolo completo su {SOURCE}", "url": item["link"]}]},
+        {"type": 1, "components": [{"type": 2, "style": 5, "label": f"Articolo completo su {item['source']}", "url": item["link"]}]},
     ]
     # 1<<15 Components V2, 1<<12 silenzioso: il forum è una bacheca da sfogliare, non deve far suonare nessuno
     return {"flags": (1 << 15) | (1 << 12), "components": [{"type": 17, "accent_color": XBOX_GREEN, "components": inner}]}
 
 
 def existing_posts(token):
-    """Titoli già pubblicati e ora (unix) del post più recente, letta dall'ID snowflake."""
+    """Titoli già pubblicati nel forum."""
     active = http("GET", f"{API}/guilds/{GUILD_ID}/threads/active", token)["threads"]
     archived = http("GET", f"{API}/channels/{FORUM_ID}/threads/archived/public?limit=100", token)["threads"]
     posts = [t for t in active + archived if t.get("parent_id") == FORUM_ID]
-    newest = max(((int(t["id"]) >> 22) + 1420070400000) // 1000 for t in posts) if posts else 0
-    return {t["name"] for t in posts}, newest
+    return {t["name"] for t in posts}
 
 
 def main():
     token = os.environ.get("DISCORD_TOKEN") or Path(__file__).with_name("token.txt").read_text().strip()
     forum = http("GET", f"{API}/channels/{FORUM_ID}", token)
     tag_ids = {re.sub(r"^\W+", "", t["name"]).strip(): t["id"] for t in forum["available_tags"]}
-    seen, newest = existing_posts(token)
+    seen = existing_posts(token)
 
-    # solo notizie uscite dopo l'ultimo post (1h di margine per i feed in ritardo): niente arretrati in cima al forum
+    # ultime 48 ore non ancora pubblicate: copre i giri saltati da GitHub senza riesumare notizie vecchie
     items = [i for i in fetch_feed()
-             if i["title"] and i["title"][:100] not in seen and i["ts"] > newest - 3600]
+             if i["title"] and i["title"][:100] not in seen and i["ts"] > time.time() - 2 * 86400]
     items = sorted(items, key=lambda i: i["ts"])[-(FIRST_RUN_MAX if not seen else RUN_MAX):]  # dal più vecchio, così il più nuovo sta in cima
     for item in items:
         tags = pick_tags(item)
@@ -117,6 +131,11 @@ def main():
         print("pubblicata:", item["title"], tags)
         time.sleep(1.5)  # gentile con i limiti di Discord
     print(f"{len(items)} notizie nuove")
+    if time.gmtime().tm_hour >= DAILY_HOUR_UTC:
+        daily(token)
+
+
+DAILY_HOUR_UTC = 17  # 18:00 in Italia d'inverno: esce al primo giro dopo quest'ora, una volta al giorno
 
 
 # cosa rende "grossa" una notizia: annunci ufficiali e franchise importanti salgono, guide e sconti scendono
@@ -129,15 +148,19 @@ def importance(item):
     return len(re.findall(rf"\b({BIG})", t)) * 2 - len(re.findall(rf"\b({SMALL})", t))
 
 
-def daily():
+def daily(token):
     """Una sola card al giorno in #generale con la notizia più importante delle ultime 24 ore."""
-    token = os.environ.get("DISCORD_TOKEN") or Path(__file__).with_name("token.txt").read_text().strip()
     forum = http("GET", f"{API}/channels/{FORUM_ID}", token)
     if any(o["id"] == GUILD_ID and int(o["deny"]) & 1024 for o in forum["permission_overwrites"]):
         print("forum ancora privato: niente big news in #generale")  # parte da sola quando il forum diventa pubblico
         return
     channels = http("GET", f"{API}/guilds/{GUILD_ID}/channels", token)
     general = next(c for c in channels if c["type"] == 0 and "generale" in c["name"])
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    for m in http("GET", f"{API}/channels/{general['id']}/messages?limit=100", token):
+        sent = time.strftime("%Y-%m-%d", time.gmtime(((int(m["id"]) >> 22) + 1420070400000) / 1000))
+        if m["author"].get("bot") and sent == today and "BIG NEWS XBOX" in str(m.get("components")):
+            return  # già uscita oggi
     recent = [i for i in fetch_feed() if i["ts"] > time.time() - 86400]
     if not recent:
         print("nessuna notizia nelle ultime 24 ore")
@@ -166,7 +189,8 @@ def self_test():
     assert pick_tags({"title": "Metro Redux: disponibile l'aggiornamento Next Gen", "summary": ""}) == ["Hardware", "Aggiornamenti", "Giochi"]
     assert big_image('<img src="https://static.mondoxbox.com/shots/small/158/158619.jpg">') == "https://www.mondoxbox.com/images/shots/158/158619.jpg"
     assert clean("Testo [continua]") == "Testo"
-    c = card({"title": "T", "link": "https://x", "summary": "s", "image": "https://i", "ts": 1}, ["News"])
+    c = card({"title": "T", "link": "https://x", "summary": "s", "image": "https://i", "source": "IGN Italia", "ts": 1}, ["News"])
+    assert "IGN Italia" in str(c)
     assert c["flags"] == 32768 | 4096 and c["components"][0]["type"] == 17
     assert importance({"title": "Bethesda conferma il nome ufficiale di TES VI: The Elder Scrolls VI"}) > \
         importance({"title": "Gears of War: E-Day – Guida a tutti i collezionabili"})
@@ -177,7 +201,5 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if "--test" in sys.argv:
         self_test()
-    elif "--giornaliera" in sys.argv:
-        daily()
     else:
         main()
