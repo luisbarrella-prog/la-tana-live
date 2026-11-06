@@ -1,0 +1,21 @@
+name: Annunci
+
+on:
+  push:
+    branches: [main]
+    paths: ["annunci/*.md"]
+
+jobs:
+  pubblica:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # solo i file nuovi: modificare un annuncio già uscito non lo ripubblica
+      - run: |
+          files=$(git diff --name-only --diff-filter=A ${{ github.event.before }} ${{ github.sha }} -- 'annunci/*.md' | sort)
+          if [ -n "$files" ]; then python annuncia.py $files; else echo "nessun annuncio nuovo"; fi
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
