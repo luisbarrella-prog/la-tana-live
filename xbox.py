@@ -78,19 +78,24 @@ def card(item, tags):
     return {"flags": 1 << 15, "components": [{"type": 17, "accent_color": XBOX_GREEN, "components": inner}]}
 
 
-def existing_titles(token):
+def existing_posts(token):
+    """Titoli già pubblicati e ora (unix) del post più recente, letta dall'ID snowflake."""
     active = http("GET", f"{API}/guilds/{GUILD_ID}/threads/active", token)["threads"]
     archived = http("GET", f"{API}/channels/{FORUM_ID}/threads/archived/public?limit=100", token)["threads"]
-    return {t["name"] for t in active + archived if t.get("parent_id") == FORUM_ID}
+    posts = [t for t in active + archived if t.get("parent_id") == FORUM_ID]
+    newest = max(((int(t["id"]) >> 22) + 1420070400000) // 1000 for t in posts) if posts else 0
+    return {t["name"] for t in posts}, newest
 
 
 def main():
     token = os.environ.get("DISCORD_TOKEN") or Path(__file__).with_name("token.txt").read_text().strip()
     forum = http("GET", f"{API}/channels/{FORUM_ID}", token)
     tag_ids = {re.sub(r"^\W+", "", t["name"]).strip(): t["id"] for t in forum["available_tags"]}
-    seen = existing_titles(token)
+    seen, newest = existing_posts(token)
 
-    items = [i for i in fetch_feed() if i["title"] and i["title"][:100] not in seen]
+    # solo notizie uscite dopo l'ultimo post (1h di margine per i feed in ritardo): niente arretrati in cima al forum
+    items = [i for i in fetch_feed()
+             if i["title"] and i["title"][:100] not in seen and i["ts"] > newest - 3600]
     items = sorted(items, key=lambda i: i["ts"])[-(FIRST_RUN_MAX if not seen else RUN_MAX):]  # dal più vecchio, così il più nuovo sta in cima
     for item in items:
         tags = pick_tags(item)
