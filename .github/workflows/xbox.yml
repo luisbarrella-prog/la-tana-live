@@ -2,7 +2,8 @@ name: Xbox news
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # ogni 15 minuti
+    - cron: "*/15 * * * *"   # forum notizie, ogni 15 minuti
+    - cron: "0 17 * * *"     # big news del giorno in #generale (18:00 in Italia d'inverno)
   workflow_dispatch:
 
 permissions:
@@ -12,11 +13,14 @@ jobs:
   notizie:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    env:
+      DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - run: python xbox.py
-        env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        if: github.event.schedule != '0 17 * * *'
+      - run: python xbox.py --giornaliera
+        if: github.event.schedule == '0 17 * * *'
       # GitHub spegne i workflow programmati dopo 60 giorni senza attività: riattivarlo azzera il conteggio
       - run: gh workflow enable xbox.yml
         env:
